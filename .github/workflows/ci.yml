@@ -1,0 +1,50 @@
+name: CI
+
+# Run on every push and on every pull request into main
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build and run tests
+        run: mvn -B verify
+
+      - name: Upload test reports if anything failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: target/surefire-reports/
+
+  docker:
+    # Only build the image if the tests passed
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t ledger-api:${{ github.sha }} .
+
+      - name: Smoke test the container
+        run: |
+          docker run -d --name ledger -p 8080:8080 ledger-api:${{ github.sha }}
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/actuator/health; then echo; echo "Container is healthy"; exit 0; fi
+            sleep 2
+          done
+          echo "Container never became healthy"; docker logs ledger; exit 1
